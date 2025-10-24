@@ -1,0 +1,31 @@
+# Data processing
+matplotlib       # Create plots and charts
+pandas           # Data manipulation and analysis
+pandas-ta # Technical analysis library (compatible with numpy)
+numpy>=1.24.4    # Scientific computing (compatible with pandas-ta)
+scipy            # Scientific computing library for signal processing
+
+# Process management
+supervisor       # Keep scripts running in background, auto-restart on crash
+
+# Logging
+loguru           # Better logging with colors and easy configuration
+
+# Task queue and caching
+celery           # Distributed task queue for background jobs
+redis            # In-memory database for caching and message broker
+
+# System monitoring
+psutil           # Get system info (CPU, memory usage)
+
+# Celery monitoring
+flower           # Web interface to monitor Celery tasks
+requests
+playwright       # Headless browser automation for web scraping
+aiohttp          # Async HTTP client for API requests
+python-binance   # Official Binance Python SDK
+python-dotenv    # Load environment variables from .env file
+pydantic         # Data validation and settings management
+websockets       # WebSocket client and server library
+watchdog         # File system event monitoring for config hot-reload
+psycopg2-binary  # PostgreSQL database adapter
