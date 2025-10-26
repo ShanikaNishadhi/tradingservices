@@ -38,17 +38,19 @@ async def check_new_listings():
         details = parse_announcement(listing['content'])
         if details:
             logger.info(f"Sending Telegram notification for {details['coin']}")
-            send_telegram_message(
+            success = send_telegram_message(
                 details['coin'],
                 details['market'],
                 details['trading_start'],
                 listing['url']
             )
-            logger.info("Notification sent successfully")
+            if success:
+                logger.info("Notification sent successfully")
+                last_id = listing['id']
+            else:
+                logger.error("Failed to send notification - will retry on next cycle")
         else:
-            logger.error("Failed to parse announcement details")
-
-        last_id = listing['id']
+            logger.error("Failed to parse announcement details - will retry on next cycle")
     else:
         logger.info("No new listings found")
 
