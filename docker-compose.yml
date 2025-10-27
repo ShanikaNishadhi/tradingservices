@@ -28,6 +28,7 @@ services:
       dockerfile: App/new_coin_listing/Dockerfile
     container_name: new_coin_listing
     restart: always
+    network_mode: host
     depends_on:
       - timescaledb
       - redis
@@ -35,6 +36,9 @@ services:
       - .env
     volumes:
       - ./App/new_coin_listing:/app
+    environment:
+      - POSTGRES_HOST=localhost
+      - REDIS_HOST=localhost
 
   pnlgap:
     build:

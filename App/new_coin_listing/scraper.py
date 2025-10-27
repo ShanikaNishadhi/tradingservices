@@ -18,6 +18,11 @@ async def fetch_latest_listing():
             )
 
             context = await browser.new_context(
+                proxy={
+                    'server': 'http://142.111.67.146:5611',
+                    'username': 'makkrbjv',
+                    'password': '164txeju4p4h'
+                },
                 user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 viewport={'width': 1920, 'height': 1080}
             )
