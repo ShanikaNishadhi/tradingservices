@@ -266,10 +266,10 @@ class SimpleTrendsStrategy:
 
                 # Check margin limit FIRST (if price above margin limit, don't create LONG)
                 if self.long_margin_limit is not None and mark_price > Decimal(str(self.long_margin_limit)):
-                    logger.info(f"{self.symbol}: LONG margin limit hit (price {mark_price} > limit {self.long_margin_limit}), skipping order but updated min_price")
+                    pass 
                 # Check if order limit reached for LONG
                 elif len(self.open_orders_cache['LONG']) >= self.long_order_limit:
-                    logger.info(f"{self.symbol}: LONG order limit reached ({self.long_order_limit}), skipping order creation")
+                    pass
                 # Check order block using last trade price (actual execution price)
                 elif self._check_order_block('LONG', last_trade_price):
                     logger.warning(f"{self.symbol}: LONG SIGNAL - mark_price={mark_price}, last_trade={last_trade_price}, "
@@ -286,10 +286,10 @@ class SimpleTrendsStrategy:
 
                 # Check margin limit FIRST (if price below margin limit, don't create SHORT)
                 if self.short_margin_limit is not None and mark_price < Decimal(str(self.short_margin_limit)):
-                    logger.info(f"{self.symbol}: SHORT margin limit hit (price {mark_price} < limit {self.short_margin_limit}), skipping order but updated max_price")
+                    pass  # Skip order creation but max_price already updated
                 # Check if order limit reached for SHORT
                 elif len(self.open_orders_cache['SHORT']) >= self.short_order_limit:
-                    logger.info(f"{self.symbol}: SHORT order limit reached ({self.short_order_limit}), skipping order creation")
+                    pass  # Skip order creation
                 # Check order block using last trade price (actual execution price)
                 elif self._check_order_block('SHORT', last_trade_price):
                     logger.warning(f"{self.symbol}: SHORT SIGNAL - mark_price={mark_price}, last_trade={last_trade_price}, "
