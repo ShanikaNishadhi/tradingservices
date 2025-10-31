@@ -57,6 +57,23 @@ services:
       - ./App/pnlgap:/app/App/pnlgap
       - ./App/helpers:/app/App/helpers
 
+  simpletrends:
+    build:
+      context: .
+      dockerfile: App/simpletrends/Dockerfile
+    container_name: simpletrends
+    restart: always
+    depends_on:
+      - redis
+      - timescaledb
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+    volumes:
+      - ./App/simpletrends:/app/App/simpletrends
+      - ./App/helpers:/app/App/helpers
+
 volumes:
   tsdata:
     external: true
