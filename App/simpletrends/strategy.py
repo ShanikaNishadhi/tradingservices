@@ -68,6 +68,9 @@ class SimpleTrendsStrategy:
         # Track position entry prices (breakeven) from ACCOUNT_UPDATE events
         self.position_entry_price = {'LONG': None, 'SHORT': None}
 
+        # Track last time state was saved to database
+        self.last_state_save = datetime.now()
+
         # Set leverage
         self._set_leverage()
 
@@ -120,15 +123,26 @@ class SimpleTrendsStrategy:
     def initialize(self):
         """Initialize strategy state"""
 
+        # Try to load saved state from database
+        saved_state = self.db.get_state(self.symbol)
+
         # Get current price as start price
         current_price = self._get_current_price()
-        if current_price > 0:
-            self.start_price = current_price
-            self.min_price = current_price
-            self.max_price = current_price
-        else:
+        if current_price <= 0:
             logger.error(f"{self.symbol}: Could not get current price")
             return
+
+        self.start_price = current_price
+
+        # Use saved min/max if available, otherwise use current price
+        if saved_state:
+            self.min_price = Decimal(str(saved_state['min_price']))
+            self.max_price = Decimal(str(saved_state['max_price']))
+            logger.info(f"{self.symbol}: Loaded saved state - min={self.min_price}, max={self.max_price}")
+        else:
+            self.min_price = current_price
+            self.max_price = current_price
+            logger.info(f"{self.symbol}: No saved state, using current price - {current_price}")
 
         # Calculate threshold values based on start price
         self._calculate_thresholds()
@@ -183,6 +197,14 @@ class SimpleTrendsStrategy:
         while self.running:
             try:
                 await self.check_and_execute()
+
+                # Save state to database every 5 minutes
+                now = datetime.now()
+                if (now - self.last_state_save).total_seconds() >= 300:  # 5 minutes
+                    self.db.save_state(self.symbol, self.min_price, self.max_price)
+                    self.last_state_save = now
+                    logger.info(f"{self.symbol}: Saved state - min={self.min_price}, max={self.max_price}")
+
                 await asyncio.sleep(1)  # Poll every 1 second
             except Exception as e:
                 logger.error(f"{self.symbol}: Error in strategy loop: {e}")
@@ -191,6 +213,12 @@ class SimpleTrendsStrategy:
     async def stop(self):
         """Stop strategy loop"""
         self.running = False
+
+        # Save state one final time before stopping
+        if self.min_price and self.max_price:
+            self.db.save_state(self.symbol, self.min_price, self.max_price)
+            logger.info(f"{self.symbol}: Final state saved - min={self.min_price}, max={self.max_price}")
+
         logger.info(f"{self.symbol}: Strategy stopped")
 
     async def check_and_execute(self):

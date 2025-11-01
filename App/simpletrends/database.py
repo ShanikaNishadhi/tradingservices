@@ -53,6 +53,16 @@ class SimpleTrendsDatabase:
             ON simple_trends_orders(symbol, status)
         """)
 
+        # Strategy state table - stores min/max prices per symbol
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS simple_trends_state (
+                symbol VARCHAR(20) PRIMARY KEY,
+                min_price DECIMAL NOT NULL,
+                max_price DECIMAL NOT NULL,
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+
         conn.commit()
         conn.close()
         logger.info(f"Database initialized at {self.conn_params['host']}")
@@ -157,6 +167,39 @@ class SimpleTrendsDatabase:
             AND (order_id = %s OR stop_loss_order_id = %s OR trailing_stop_order_id = %s)
             LIMIT 1
         """, (symbol, order_id, order_id, order_id))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        return dict(row) if row else None
+
+    def save_state(self, symbol: str, min_price: Decimal, max_price: Decimal):
+        """Save strategy state (min/max prices) to database"""
+        conn = psycopg2.connect(**self.conn_params)
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO simple_trends_state (symbol, min_price, max_price, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (symbol)
+            DO UPDATE SET
+                min_price = EXCLUDED.min_price,
+                max_price = EXCLUDED.max_price,
+                updated_at = NOW()
+        """, (symbol, float(min_price), float(max_price)))
+
+        conn.commit()
+        conn.close()
+
+    def get_state(self, symbol: str) -> Optional[Dict]:
+        """Get saved strategy state for symbol"""
+        conn = psycopg2.connect(**self.conn_params)
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        cursor.execute("""
+            SELECT * FROM simple_trends_state
+            WHERE symbol = %s
+        """, (symbol,))
 
         row = cursor.fetchone()
         conn.close()
