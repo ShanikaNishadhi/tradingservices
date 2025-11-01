@@ -42,14 +42,14 @@ async def main():
     """Main async entry point for Simple Trends strategy"""
 
     # Initialize Binance client
-    api_key = os.getenv('BINANCE_TESTNET_API_KEY')
-    api_secret = os.getenv('BINANCE_TESTNET_SECRET_KEY')
+    api_key = os.getenv('BINANCE_SUB_API_KEY')
+    api_secret = os.getenv('BINANCE_SUB_SECRET_KEY')
 
     if not api_key or not api_secret:
-        raise ValueError("BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_SECRET_KEY required")
+        raise ValueError("BINANCE_SUB_API_KEY and BINANCE_SUB_SECRET_KEY required")
 
-    client = Client(api_key, api_secret, testnet=True)
-    logger.info("Binance client initialized (TESTNET)")
+    client = Client(api_key, api_secret, testnet=False)
+    logger.info("Binance client initialized (SUBACCOUNT - MAINNET)")
 
     # Get enabled symbols
     enabled_symbols = [s for s in trading_pairs['symbols'] if s.get('enabled')]
@@ -59,7 +59,8 @@ async def main():
 
     # Initialize Redis client (use 'redis' hostname in Docker, 'localhost' otherwise)
     redis_host = os.getenv('REDIS_HOST', 'localhost')
-    redis_client = redis.Redis(host=redis_host, port=6379, db=4, decode_responses=True)
+    redis_password = os.getenv('REDIS_PASSWORD')
+    redis_client = redis.Redis(host=redis_host, port=6379, db=4, password=redis_password, decode_responses=True)
     logger.info(f"Redis client initialized (host={redis_host})")
 
     # Initialize database
@@ -73,7 +74,7 @@ async def main():
         strategies[symbol_config['symbol']] = strategy
 
     # Initialize WebSocket (writes to Redis)
-    ws = MarkPriceWebSocket(symbol_list, redis_host=redis_host, redis_port=6379, redis_db=4)
+    ws = MarkPriceWebSocket(symbol_list, redis_host=redis_host, redis_port=6379, redis_db=4, redis_password=redis_password)
 
     # Initialize User Data Stream (listens for order fills)
     user_stream = UserDataStream(client, strategies)

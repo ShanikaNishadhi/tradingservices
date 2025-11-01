@@ -35,7 +35,7 @@ class SimpleTrendsStrategy:
         self.order_threshold_percent = Decimal(str(symbol_config['order_threshold_percent']))
         self.profit_threshold_percent = Decimal(str(symbol_config['profit_threshold_percent']))
         self.trailing_stop_callback_rate = Decimal(str(symbol_config['trailing_stop_callback_rate']))
-        self.stop_loss_percent = Decimal(str(symbol_config['stop_loss_percent']))
+        self.stop_loss_percent = Decimal(str(symbol_config['stop_loss_percent'])) if symbol_config['stop_loss_percent'] is not None else None
         self.leverage = symbol_config['leverage']
         self.price_precision = symbol_config['price_precision']
         self.quantity_precision = symbol_config['quantity_precision']
@@ -150,10 +150,11 @@ class SimpleTrendsStrategy:
         # Load open orders from database into cache
         self._load_orders_cache()
 
+        stop_loss_str = f"${self.stop_loss_price:.8f} ({self.stop_loss_percent}%)" if self.stop_loss_price is not None else "DISABLED"
         logger.warning(f"{self.symbol}: INITIALIZED - start_price={self.start_price}, "
                       f"order_threshold=${self.order_threshold_price:.8f} ({self.order_threshold_percent}%), "
                       f"profit_threshold=${self.profit_threshold_price:.8f} ({self.profit_threshold_percent}%), "
-                      f"stop_loss=${self.stop_loss_price:.8f} ({self.stop_loss_percent}%), "
+                      f"stop_loss={stop_loss_str}, "
                       f"forward_block=${self.forward_order_block_price:.8f} ({self.forward_order_block_percent}%), "
                       f"backward_block=${self.backward_order_block_price:.8f} ({self.backward_order_block_percent}%), "
                       f"trailing_callback={self.trailing_stop_callback_rate}%, "
@@ -167,8 +168,8 @@ class SimpleTrendsStrategy:
         # Profit threshold: price movement to activate trailing stop
         self.profit_threshold_price = self.start_price * (self.profit_threshold_percent / Decimal('100'))
 
-        # Stop loss: price movement for stop loss
-        self.stop_loss_price = self.start_price * (self.stop_loss_percent / Decimal('100'))
+        # Stop loss: price movement for stop loss (None if disabled)
+        self.stop_loss_price = self.start_price * (self.stop_loss_percent / Decimal('100')) if self.stop_loss_percent is not None else None
 
         # Order block: prevent orders too close to existing orders
         self.forward_order_block_price = self.start_price * (self.forward_order_block_percent / Decimal('100'))
@@ -449,8 +450,9 @@ class SimpleTrendsStrategy:
                 }
                 self.open_orders_cache[side].append(order_cache_entry)
 
-                # Create stop orders using asyncio
-                asyncio.create_task(self._create_stop_orders(side, filled_price, filled_qty, db_id))
+                # Create stop orders using asyncio (only if stop loss is enabled)
+                if self.stop_loss_percent is not None:
+                    asyncio.create_task(self._create_stop_orders(side, filled_price, filled_qty, db_id))
 
                 # Remove from pending
                 del self.pending_market_orders[order_id]
