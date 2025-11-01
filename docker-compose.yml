@@ -80,6 +80,24 @@ services:
       - ./App/simpletrends:/app/App/simpletrends
       - ./App/helpers:/app/App/helpers
 
+  breakeven:
+    build:
+      context: .
+      dockerfile: App/breakeven/Dockerfile
+    container_name: breakeven
+    restart: always
+    depends_on:
+      - redis
+      - timescaledb
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./App/breakeven:/app/App/breakeven
+      - ./App/helpers:/app/App/helpers
+
 volumes:
   tsdata:
     external: true
