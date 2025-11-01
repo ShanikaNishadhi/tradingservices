@@ -42,14 +42,14 @@ async def main():
     """Main async entry point for Simple Trends strategy"""
 
     # Initialize Binance client
-    api_key = os.getenv('BINANCE_SUB_API_KEY')
-    api_secret = os.getenv('BINANCE_SUB_SECRET_KEY')
+    api_key = os.getenv('BINANCE_TESTNET_API_KEY')
+    api_secret = os.getenv('BINANCE_TESTNET_SECRET_KEY')
 
     if not api_key or not api_secret:
-        raise ValueError("BINANCE_SUB_API_KEY and BINANCE_SUB_SECRET_KEY required")
+        raise ValueError("BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_SECRET_KEY required")
 
-    client = Client(api_key, api_secret, testnet=False)
-    logger.info("Binance client initialized (SUBACCOUNT - MAINNET)")
+    client = Client(api_key, api_secret, testnet=True)
+    logger.info("Binance client initialized (TESTNET)")
 
     # Get enabled symbols
     enabled_symbols = [s for s in trading_pairs['symbols'] if s.get('enabled')]

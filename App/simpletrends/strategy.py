@@ -352,38 +352,40 @@ class SimpleTrendsStrategy:
             logger.error(f"{self.symbol}: ERROR CREATING ORDER - side={side}, error={e}")
 
     async def _create_stop_orders(self, side: str, entry_price: Decimal, quantity: Decimal, db_id: int):
-        """Create trailing stop and stop loss orders after position is filled"""
+        """Create trailing stop and optionally stop loss orders after position is filled"""
         try:
-            # Use fixed threshold values calculated at startup
-            # Calculate stop loss price and trailing activation
+            # Determine order sides based on position direction
             if side == 'LONG':
-                stop_loss_price = entry_price - self.stop_loss_price
                 # For trailing stop: SELL order, activation = entry + profit threshold
                 trailing_activation = entry_price + self.profit_threshold_price
                 trailing_side = 'SELL'
                 stop_side = 'SELL'
+                stop_loss_price = entry_price - self.stop_loss_price if self.stop_loss_price else None
             else:  # SHORT
-                stop_loss_price = entry_price + self.stop_loss_price
                 # For trailing stop: BUY order, activation = entry - profit threshold
                 trailing_activation = entry_price - self.profit_threshold_price
                 trailing_side = 'BUY'
                 stop_side = 'BUY'
+                stop_loss_price = entry_price + self.stop_loss_price if self.stop_loss_price else None
 
-            # Create stop loss order
-            stop_loss_response = create_stop_market_order(
-                client=self.client,
-                symbol=self.symbol,
-                side=stop_side,
-                quantity=self._format_quantity(quantity),
-                stop_price=self._format_price(stop_loss_price),
-                position_side=side
-            )
-            stop_loss_order_id = str(stop_loss_response.get('orderId'))
+            stop_loss_order_id = None
 
-            logger.warning(f"{self.symbol}: STOP LOSS CREATED - side={side}, "
-                          f"stop_price={stop_loss_price:.8f}, order_id={stop_loss_order_id}")
+            # Create stop loss order only if stop_loss_price is enabled
+            if self.stop_loss_price is not None and stop_loss_price is not None:
+                stop_loss_response = create_stop_market_order(
+                    client=self.client,
+                    symbol=self.symbol,
+                    side=stop_side,
+                    quantity=self._format_quantity(quantity),
+                    stop_price=self._format_price(stop_loss_price),
+                    position_side=side
+                )
+                stop_loss_order_id = str(stop_loss_response.get('orderId'))
 
-            # Create trailing stop order
+                logger.warning(f"{self.symbol}: STOP LOSS CREATED - side={side}, "
+                              f"stop_price={stop_loss_price:.8f}, order_id={stop_loss_order_id}")
+
+            # Always create trailing stop order for profit taking
             trailing_response = create_trailing_stop_order(
                 client=self.client,
                 symbol=self.symbol,
@@ -450,9 +452,8 @@ class SimpleTrendsStrategy:
                 }
                 self.open_orders_cache[side].append(order_cache_entry)
 
-                # Create stop orders using asyncio (only if stop loss is enabled)
-                if self.stop_loss_percent is not None:
-                    asyncio.create_task(self._create_stop_orders(side, filled_price, filled_qty, db_id))
+                # Create stop orders using asyncio (trailing stop always, stop loss if enabled)
+                asyncio.create_task(self._create_stop_orders(side, filled_price, filled_qty, db_id))
 
                 # Remove from pending
                 del self.pending_market_orders[order_id]

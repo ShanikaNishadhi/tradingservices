@@ -21,6 +21,28 @@ trading_pairs = {
             "margin_asset": "USDT",
             "price_precision": 4,
             "quantity_precision": 0
+        },
+        {
+            "symbol": "ONUSDT",
+            "enabled": True,
+            "long_enabled": True,
+            "short_enabled": True,
+            "long_order_limit": 20,
+            "short_order_limit": 20,
+            "long_margin_limit": None,
+            "short_margin_limit": None,
+            "position_size": 600,
+            "order_threshold_percent": 2,
+            "profit_threshold_percent": 2,
+            "trailing_stop_callback_rate": 1,
+            "stop_loss_percent": None,
+            "forward_order_block_percent": 2,
+            "backward_order_block_percent": 2,
+            "order_type": "MARKET",
+            "leverage": 5,
+            "margin_asset": "USDT",
+            "price_precision": 7,
+            "quantity_precision": 0
         }
     ],
 }
