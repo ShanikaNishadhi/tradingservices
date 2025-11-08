@@ -14,7 +14,7 @@ from App.helpers.futureorder import (
     cancel_order,
     get_price
 )
-from App.simpletrends.database import SimpleTrendsDatabase
+from App.simpletrendsmemecoins.database import SimpleTrendsDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,60 @@ class SimpleTrendsStrategy:
                 return False
 
         return True
+
+    def _check_position_balance(self, side: str, mark_price: Decimal) -> bool:
+        """
+        Check position balance rules to prevent overexposure during retracements.
+
+        For LONG: Can create if mark_price > highest_long OR long_count < short_count
+        For SHORT: Can create if mark_price < lowest_short OR short_count <= long_count
+        """
+        long_orders = self.open_orders_cache['LONG']
+        short_orders = self.open_orders_cache['SHORT']
+        long_count = len(long_orders)
+        short_count = len(short_orders)
+
+        if side == 'LONG':
+            # No existing orders - always allow
+            if long_count == 0 and short_count == 0:
+                return True
+
+            # No existing long orders - always allow
+            if long_count == 0:
+                return True
+
+            # Get highest long entry price
+            highest_long_price = max(Decimal(str(order['entry_price'])) for order in long_orders)
+
+            # Can create if going higher OR if longs < shorts (retracement hedge)
+            if mark_price > highest_long_price:
+                return True
+            elif long_count < short_count:
+                return True
+            else:
+                return False
+
+        elif side == 'SHORT':
+            # No existing orders - always allow
+            if long_count == 0 and short_count == 0:
+                return True
+
+            # No existing short orders - always allow
+            if short_count == 0:
+                return True
+
+            # Get lowest short entry price
+            lowest_short_price = min(Decimal(str(order['entry_price'])) for order in short_orders)
+
+            # Can create if going lower OR if shorts <= longs (retracement hedge)
+            if mark_price < lowest_short_price:
+                return True
+            elif short_count <= long_count:
+                return True
+            else:
+                return False
+
+        return False
 
     def initialize(self):
         """Initialize strategy state"""
@@ -297,6 +351,9 @@ class SimpleTrendsStrategy:
                 # Check if order limit reached for LONG
                 elif len(self.open_orders_cache['LONG']) >= self.long_order_limit:
                     pass
+                # Check position balance (retracement protection)
+                elif not self._check_position_balance('LONG', mark_price):
+                    pass
                 # Check order block using last trade price (actual execution price)
                 elif self._check_order_block('LONG', last_trade_price):
                     # All checks passed - update min price and create order
@@ -316,6 +373,9 @@ class SimpleTrendsStrategy:
                     pass
                 # Check if order limit reached for SHORT
                 elif len(self.open_orders_cache['SHORT']) >= self.short_order_limit:
+                    pass
+                # Check position balance (retracement protection)
+                elif not self._check_position_balance('SHORT', mark_price):
                     pass
                 # Check order block using last trade price (actual execution price)
                 elif self._check_order_block('SHORT', last_trade_price):

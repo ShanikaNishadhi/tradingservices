@@ -15,7 +15,7 @@ class MarkPriceWebSocket:
     def __init__(self, symbols: list[str], redis_host: str = "localhost",
                  redis_port: int = 6379, redis_db: int = 3, redis_password: str = None):
         self.symbols = symbols
-        self.ws_url = "wss://stream.binancefuture.com/ws"
+        self.ws_url = "wss://fstream.binance.com/ws"
         self.running = False
         self.websocket = None
         self.redis_client = redis.Redis(host=redis_host, port=redis_port, db=redis_db, password=redis_password, decode_responses=True)

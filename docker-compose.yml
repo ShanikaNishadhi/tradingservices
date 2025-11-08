@@ -98,6 +98,62 @@ services:
       - ./App/breakeven:/app/App/breakeven
       - ./App/helpers:/app/App/helpers
 
+  simpletrends-memecoins:
+    build:
+      context: .
+      dockerfile: App/simpletrends-memecoins/Dockerfile
+    container_name: simpletrends-memecoins
+    restart: always
+    depends_on:
+      - redis
+      - timescaledb
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./App/simpletrends-memecoins:/app/App/simpletrendsmemecoins
+      - ./App/helpers:/app/App/helpers
+
+  advancedpnl:
+    build:
+      context: .
+      dockerfile: App/advancedpnl/Dockerfile
+    container_name: advancedpnl
+    restart: always
+    depends_on:
+      - redis
+      - timescaledb
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./App/advancedpnl:/app/App/advancedpnl
+      - ./App/helpers:/app/App/helpers
+
+  advancedpnl_backup:
+    build:
+      context: .
+      dockerfile: App/advancedpnl_backup/Dockerfile
+    container_name: advancedpnl_backup
+    restart: "no"
+    depends_on:
+      - redis
+      - timescaledb
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./App/advancedpnl_backup:/app/App/advancedpnl_backup
+      - ./App/helpers:/app/App/helpers
+    profiles:
+      - backup
+
 volumes:
   tsdata:
     external: true

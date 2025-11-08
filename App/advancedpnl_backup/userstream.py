@@ -106,7 +106,7 @@ class UserDataStream:
                     self.strategies[symbol].handle_order_fill(order_data)
 
             elif event_type == 'ACCOUNT_UPDATE':
-                # Handle position updates to track entry prices
+                # Handle position updates to track entry prices (breakeven)
                 account_data = data.get('a', {})
                 positions = account_data.get('P', [])
 

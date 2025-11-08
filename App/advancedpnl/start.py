@@ -7,18 +7,17 @@ from dotenv import load_dotenv
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-from App.simpletrends.websocket import MarkPriceWebSocket
-from App.simpletrends.userstream import UserDataStream
-from App.simpletrends.tradingpairs import trading_pairs
-from App.simpletrends.strategy import SimpleTrendsStrategy
-from App.simpletrends.database import SimpleTrendsDatabase
-from App.simpletrends.monitor import monitor_all_discrepancies
+from App.advancedpnl.websocket import MarkPriceWebSocket
+from App.advancedpnl.userstream import UserDataStream
+from App.advancedpnl.tradingpairs import trading_pairs
+from App.advancedpnl.strategy import AdvancedPnlStrategy
+from App.advancedpnl.database import AdvancedPnlDatabase
 
 # Load environment
 load_dotenv()
 
 # Configure logging with file handler
-log_file = Path(__file__).parent / 'simpletrends.log'
+log_file = Path(__file__).parent / 'advancedpnl.log'
 file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
 file_handler.setLevel(logging.INFO)
 
@@ -39,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    """Main async entry point for Simple Trends strategy"""
+    """Main async entry point for Advanced PNL strategy"""
 
     # Initialize Binance client
     api_key = os.getenv('BINANCE_SUB_API_KEY')
@@ -64,12 +63,12 @@ async def main():
     logger.info(f"Redis client initialized (host={redis_host})")
 
     # Initialize database
-    db = SimpleTrendsDatabase()
+    db = AdvancedPnlDatabase()
 
     # Initialize strategies
     strategies = {}
     for symbol_config in enabled_symbols:
-        strategy = SimpleTrendsStrategy(client, symbol_config, db, redis_client)
+        strategy = AdvancedPnlStrategy(client, symbol_config, db, redis_client)
         strategy.initialize()
         strategies[symbol_config['symbol']] = strategy
 
@@ -80,23 +79,19 @@ async def main():
     user_stream = UserDataStream(client, strategies)
 
     logger.info("=" * 60)
-    logger.info("SIMPLE TRENDS STRATEGY STARTING")
+    logger.info("ADVANCED PNL STRATEGY STARTING")
     logger.info("=" * 60)
     logger.info(f"Symbols: {len(symbol_list)}")
+    logger.info("Architecture: PNLGap (parent) + SimpleTrends (child)")
     logger.info("Price updates: Every 1 second (from WebSocket to Redis)")
     logger.info("Strategy checks: Every 1 second (polling Redis)")
     logger.info("Order fills: Real-time via User Data Stream")
-    logger.info("Discrepancy monitoring: Every 5 minutes (all symbols)")
     logger.info("=" * 60)
-
-    # Running flag for monitoring task
-    running_flag = [True]
 
     # Create tasks for all services
     tasks = [
         asyncio.create_task(ws.start()),
         asyncio.create_task(user_stream.start()),
-        asyncio.create_task(monitor_all_discrepancies(client, strategies, db, running_flag))
     ]
 
     # Strategy tasks (one per symbol)
@@ -108,9 +103,6 @@ async def main():
         await asyncio.gather(*tasks)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
-
-        # Stop monitoring
-        running_flag[0] = False
 
         # Stop all strategies
         for strategy in strategies.values():

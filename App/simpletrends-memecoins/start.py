@@ -7,18 +7,18 @@ from dotenv import load_dotenv
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-from App.simpletrends.websocket import MarkPriceWebSocket
-from App.simpletrends.userstream import UserDataStream
-from App.simpletrends.tradingpairs import trading_pairs
-from App.simpletrends.strategy import SimpleTrendsStrategy
-from App.simpletrends.database import SimpleTrendsDatabase
-from App.simpletrends.monitor import monitor_all_discrepancies
+from App.simpletrendsmemecoins.websocket import MarkPriceWebSocket
+from App.simpletrendsmemecoins.userstream import UserDataStream
+from App.simpletrendsmemecoins.tradingpairs import trading_pairs
+from App.simpletrendsmemecoins.strategy import SimpleTrendsStrategy
+from App.simpletrendsmemecoins.database import SimpleTrendsDatabase
+from App.simpletrendsmemecoins.monitor import monitor_all_discrepancies
 
 # Load environment
 load_dotenv()
 
 # Configure logging with file handler
-log_file = Path(__file__).parent / 'simpletrends.log'
+log_file = Path(__file__).parent / 'simpletrends-memecoins.log'
 file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
 file_handler.setLevel(logging.INFO)
 
@@ -60,7 +60,7 @@ async def main():
     # Initialize Redis client (use 'redis' hostname in Docker, 'localhost' otherwise)
     redis_host = os.getenv('REDIS_HOST', 'localhost')
     redis_password = os.getenv('REDIS_PASSWORD')
-    redis_client = redis.Redis(host=redis_host, port=6379, db=4, password=redis_password, decode_responses=True)
+    redis_client = redis.Redis(host=redis_host, port=6379, db=5, password=redis_password, decode_responses=True)
     logger.info(f"Redis client initialized (host={redis_host})")
 
     # Initialize database
@@ -74,13 +74,13 @@ async def main():
         strategies[symbol_config['symbol']] = strategy
 
     # Initialize WebSocket (writes to Redis)
-    ws = MarkPriceWebSocket(symbol_list, redis_host=redis_host, redis_port=6379, redis_db=4, redis_password=redis_password)
+    ws = MarkPriceWebSocket(symbol_list, redis_host=redis_host, redis_port=6379, redis_db=5, redis_password=redis_password)
 
     # Initialize User Data Stream (listens for order fills)
     user_stream = UserDataStream(client, strategies)
 
     logger.info("=" * 60)
-    logger.info("SIMPLE TRENDS STRATEGY STARTING")
+    logger.info("SIMPLE TRENDS MEMECOINS STRATEGY STARTING")
     logger.info("=" * 60)
     logger.info(f"Symbols: {len(symbol_list)}")
     logger.info("Price updates: Every 1 second (from WebSocket to Redis)")
