@@ -385,7 +385,8 @@ class AdvancedPnlStrategy:
     async def _check_period_close(self, mark_price: Decimal):
         """Check if period should close (breakeven + profit threshold met)"""
         try:
-            if not self._has_open_positions():
+            # Check if there are open positions using cache (avoids API call)
+            if self.cached_breakeven['long_size'] == 0 and self.cached_breakeven['short_size'] == 0:
                 return
 
             # Refresh cache every 5 minutes as safety mechanism
@@ -417,8 +418,8 @@ class AdvancedPnlStrategy:
 
             net_pnl = long_pnl + short_pnl
 
-            # Check if profit target hit
-            if net_pnl >= self.pnlgap_profit_threshold_value:
+            # Check if profit target hit (safety: skip if threshold not initialized)
+            if self.pnlgap_profit_threshold_value is not None and net_pnl >= self.pnlgap_profit_threshold_value:
                 logger.warning(f"{self.symbol}: PROFIT TARGET HIT! "
                              f"net_pnl=${net_pnl:.2f}, threshold=${self.pnlgap_profit_threshold_value:.2f}, "
                              f"long_pnl=${long_pnl:.2f} (size={long_size}, breakeven={long_breakeven}), "
@@ -616,6 +617,21 @@ class AdvancedPnlStrategy:
                 self.db.close_all_pnlgap_orders(self.symbol, self.period_id)
                 self.db.close_all_st_orders(self.symbol, self.period_id)
                 logger.warning(f"{self.symbol}: PERIOD {old_period_id} ENDED - total_profit=${actual_pnl:.2f}")
+
+            # Check if we should continue periods
+            continue_periods = self.config.get('continue_periods', True)
+            # Handle case-insensitive boolean (False, false, FALSE, "false", etc.)
+            if isinstance(continue_periods, str):
+                continue_periods = continue_periods.lower() not in ['false', '0', 'no']
+
+            if not continue_periods:
+                logger.warning(f"{self.symbol}: STOPPING STRATEGY - continue_periods is False. No new periods will be created.")
+                self.running = False
+                # Disable simpletrends
+                self.st_enabled = False
+                self.st_open_orders_cache = {'LONG': [], 'SHORT': []}
+                self.st_pending_market_orders = {}
+                return
 
             # Disable simpletrends
             self.st_enabled = False

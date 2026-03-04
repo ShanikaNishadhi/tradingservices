@@ -9,8 +9,8 @@ import os
 logger = logging.getLogger(__name__)
 
 
-class AdvancedPnlDatabase:
-    """Database manager for Advanced PNL strategy - combines PNLGap and SimpleTrends"""
+class AdvancedSimpleTrendsDatabase:
+    """Database manager for AdvancedSimpleTrends strategy - combines PNLGap and SimpleTrends"""
 
     def __init__(self):
         self.conn_params = {
@@ -29,7 +29,7 @@ class AdvancedPnlDatabase:
 
         # PNLGap-style orders table
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS advancedpnl_backup_pnlgap_orders (
+            CREATE TABLE IF NOT EXISTS advancedsimpletrends_pnlgap_orders (
                 id SERIAL PRIMARY KEY,
                 symbol VARCHAR(20) NOT NULL,
                 side VARCHAR(10) NOT NULL,
@@ -48,7 +48,7 @@ class AdvancedPnlDatabase:
 
         # SimpleTrends-style orders table
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS advancedpnl_backup_simpletrends_orders (
+            CREATE TABLE IF NOT EXISTS advancedsimpletrends_simpletrends_orders (
                 id SERIAL PRIMARY KEY,
                 symbol VARCHAR(20) NOT NULL,
                 side VARCHAR(10) NOT NULL,
@@ -69,7 +69,7 @@ class AdvancedPnlDatabase:
 
         # Periods table (matches pnlgap schema + adds simpletrends counts)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS advancedpnl_backup_periods (
+            CREATE TABLE IF NOT EXISTS advancedsimpletrends_periods (
                 id SERIAL PRIMARY KEY,
                 symbol VARCHAR(20) NOT NULL,
                 reference_price DECIMAL NOT NULL,
@@ -88,7 +88,7 @@ class AdvancedPnlDatabase:
 
         # SimpleTrends state table (for st_min/st_max persistence)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS advancedpnl_backup_st_state (
+            CREATE TABLE IF NOT EXISTS advancedsimpletrends_st_state (
                 symbol VARCHAR(20) PRIMARY KEY,
                 min_price DECIMAL NOT NULL,
                 max_price DECIMAL NOT NULL,
@@ -98,18 +98,18 @@ class AdvancedPnlDatabase:
 
         # Create indexes
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_advpnl_backup_pnlgap_orders_symbol_status
-            ON advancedpnl_backup_pnlgap_orders(symbol, status)
+            CREATE INDEX IF NOT EXISTS idx_advst_pnlgap_orders_symbol_status
+            ON advancedsimpletrends_pnlgap_orders(symbol, status)
         """)
 
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_advpnl_backup_st_orders_symbol_status
-            ON advancedpnl_backup_simpletrends_orders(symbol, status)
+            CREATE INDEX IF NOT EXISTS idx_advst_st_orders_symbol_status
+            ON advancedsimpletrends_simpletrends_orders(symbol, status)
         """)
 
         cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_advpnl_backup_periods_symbol
-            ON advancedpnl_backup_periods(symbol, status)
+            CREATE INDEX IF NOT EXISTS idx_advst_periods_symbol
+            ON advancedsimpletrends_periods(symbol, status)
         """)
 
         conn.commit()
@@ -128,7 +128,7 @@ class AdvancedPnlDatabase:
         max_val = float(max_price if max_price else reference_price)
 
         cursor.execute("""
-            INSERT INTO advancedpnl_backup_periods
+            INSERT INTO advancedsimpletrends_periods
             (symbol, reference_price, min_price, max_price, status)
             VALUES (%s, %s, %s, %s, 'ACTIVE')
             RETURNING id
@@ -147,7 +147,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE advancedpnl_backup_periods
+            UPDATE advancedsimpletrends_periods
             SET status = 'CLOSED',
                 ended_at = NOW(),
                 total_profit_usdt = %s
@@ -165,7 +165,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         cursor.execute("""
-            SELECT * FROM advancedpnl_backup_periods
+            SELECT * FROM advancedsimpletrends_periods
             WHERE symbol = %s AND status = 'ACTIVE'
             ORDER BY id DESC
             LIMIT 1
@@ -182,7 +182,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE advancedpnl_backup_periods
+            UPDATE advancedsimpletrends_periods
             SET min_price = %s, max_price = %s
             WHERE id = %s
         """, (float(min_price), float(max_price), period_id))
@@ -199,7 +199,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            INSERT INTO advancedpnl_backup_pnlgap_orders
+            INSERT INTO advancedsimpletrends_pnlgap_orders
             (symbol, side, order_id, quantity, entry_price, status, period_id)
             VALUES (%s, %s, %s, %s, %s, 'OPEN', %s)
             RETURNING id
@@ -211,13 +211,13 @@ class AdvancedPnlDatabase:
         if period_id:
             if side == 'LONG':
                 cursor.execute("""
-                    UPDATE advancedpnl_backup_periods
+                    UPDATE advancedsimpletrends_periods
                     SET long_count = long_count + 1
                     WHERE id = %s
                 """, (period_id,))
             else:
                 cursor.execute("""
-                    UPDATE advancedpnl_backup_periods
+                    UPDATE advancedsimpletrends_periods
                     SET short_count = short_count + 1
                     WHERE id = %s
                 """, (period_id,))
@@ -234,7 +234,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE advancedpnl_backup_pnlgap_orders
+            UPDATE advancedsimpletrends_pnlgap_orders
             SET stoploss_order_id = %s
             WHERE id = %s
         """, (stoploss_order_id, order_db_id))
@@ -248,7 +248,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE advancedpnl_backup_pnlgap_orders
+            UPDATE advancedsimpletrends_pnlgap_orders
             SET status = 'CLOSED',
                 closed_at = NOW()
             WHERE symbol = %s AND period_id = %s AND status = 'OPEN'
@@ -266,7 +266,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         cursor.execute("""
-            SELECT * FROM advancedpnl_backup_pnlgap_orders
+            SELECT * FROM advancedsimpletrends_pnlgap_orders
             WHERE symbol = %s AND period_id = %s AND status = 'OPEN'
             ORDER BY entry_price
         """, (symbol, period_id))
@@ -282,7 +282,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE advancedpnl_backup_pnlgap_orders
+            UPDATE advancedsimpletrends_pnlgap_orders
             SET status = 'CLOSED',
                 exit_price = %s,
                 profit_usdt = %s,
@@ -303,7 +303,7 @@ class AdvancedPnlDatabase:
         if side == 'LONG':
             # Get second highest LONG entry price
             cursor.execute("""
-                SELECT entry_price FROM advancedpnl_backup_pnlgap_orders
+                SELECT entry_price FROM advancedsimpletrends_pnlgap_orders
                 WHERE symbol = %s AND period_id = %s AND side = 'LONG' AND status = 'OPEN'
                 ORDER BY entry_price DESC
                 LIMIT 1 OFFSET 1
@@ -311,7 +311,7 @@ class AdvancedPnlDatabase:
         else:
             # Get second lowest SHORT entry price
             cursor.execute("""
-                SELECT entry_price FROM advancedpnl_backup_pnlgap_orders
+                SELECT entry_price FROM advancedsimpletrends_pnlgap_orders
                 WHERE symbol = %s AND period_id = %s AND side = 'SHORT' AND status = 'OPEN'
                 ORDER BY entry_price ASC
                 LIMIT 1 OFFSET 1
@@ -331,7 +331,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            INSERT INTO advancedpnl_backup_simpletrends_orders
+            INSERT INTO advancedsimpletrends_simpletrends_orders
             (symbol, side, order_id, quantity, entry_price, status, period_id)
             VALUES (%s, %s, %s, %s, %s, 'OPEN', %s)
             RETURNING id
@@ -343,13 +343,13 @@ class AdvancedPnlDatabase:
         if period_id:
             if side == 'LONG':
                 cursor.execute("""
-                    UPDATE advancedpnl_backup_periods
+                    UPDATE advancedsimpletrends_periods
                     SET st_long_count = st_long_count + 1
                     WHERE id = %s
                 """, (period_id,))
             else:
                 cursor.execute("""
-                    UPDATE advancedpnl_backup_periods
+                    UPDATE advancedsimpletrends_periods
                     SET st_short_count = st_short_count + 1
                     WHERE id = %s
                 """, (period_id,))
@@ -367,7 +367,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE advancedpnl_backup_simpletrends_orders
+            UPDATE advancedsimpletrends_simpletrends_orders
             SET stop_loss_order_id = %s,
                 trailing_stop_order_id = %s
             WHERE id = %s
@@ -382,7 +382,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE advancedpnl_backup_simpletrends_orders
+            UPDATE advancedsimpletrends_simpletrends_orders
             SET status = 'CLOSED',
                 exit_price = %s,
                 profit_usdt = %s,
@@ -402,7 +402,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         cursor.execute("""
-            SELECT * FROM advancedpnl_backup_simpletrends_orders
+            SELECT * FROM advancedsimpletrends_simpletrends_orders
             WHERE symbol = %s AND status = 'OPEN'
             ORDER BY opened_at
         """, (symbol,))
@@ -418,7 +418,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         cursor.execute("""
-            SELECT * FROM advancedpnl_backup_simpletrends_orders
+            SELECT * FROM advancedsimpletrends_simpletrends_orders
             WHERE symbol = %s
             AND (order_id = %s OR stop_loss_order_id = %s OR trailing_stop_order_id = %s)
             LIMIT 1
@@ -435,7 +435,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            UPDATE advancedpnl_backup_simpletrends_orders
+            UPDATE advancedsimpletrends_simpletrends_orders
             SET status = 'CLOSED',
                 close_reason = 'PERIOD_CLOSE',
                 closed_at = NOW()
@@ -456,7 +456,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor()
 
         cursor.execute("""
-            INSERT INTO advancedpnl_backup_st_state (symbol, min_price, max_price, updated_at)
+            INSERT INTO advancedsimpletrends_st_state (symbol, min_price, max_price, updated_at)
             VALUES (%s, %s, %s, NOW())
             ON CONFLICT (symbol)
             DO UPDATE SET
@@ -474,7 +474,7 @@ class AdvancedPnlDatabase:
         cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
         cursor.execute("""
-            SELECT * FROM advancedpnl_backup_st_state
+            SELECT * FROM advancedsimpletrends_st_state
             WHERE symbol = %s
         """, (symbol,))
 

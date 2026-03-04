@@ -17,15 +17,15 @@ from App.helpers.futureorder import (
     get_position_info,
     get_price
 )
-from App.advancedpnl_backup.database import AdvancedPnlDatabase
+from App.advancedsimpletrends.database import AdvancedSimpleTrendsDatabase
 
 logger = logging.getLogger(__name__)
 
 
-class AdvancedPnlStrategy:
-    """Advanced PNL strategy - combines PNLGap (parent) and SimpleTrends (child)"""
+class AdvancedSimpleTrendsStrategy:
+    """AdvancedSimpleTrends strategy - SimpleTrends primary, PNLGap rare (large thresholds)"""
 
-    def __init__(self, client: Client, symbol_config: Dict, db: AdvancedPnlDatabase,
+    def __init__(self, client: Client, symbol_config: Dict, db: AdvancedSimpleTrendsDatabase,
                  redis_client: redis.Redis):
         self.client = client
         self.symbol = symbol_config['symbol']
@@ -38,6 +38,7 @@ class AdvancedPnlStrategy:
         self.pnlgap_short_position_size = Decimal(str(symbol_config['pnlgap']['short_position_size']))
         self.pnlgap_long_first_order_threshold_percent = Decimal(str(symbol_config['pnlgap']['long_first_order_threshold_percent']))
         self.pnlgap_short_first_order_threshold_percent = Decimal(str(symbol_config['pnlgap']['short_first_order_threshold_percent']))
+        self.pnlgap_gap_percent = Decimal(str(symbol_config['pnlgap']['pnl_gap_percent']))
         self.pnlgap_long_order_threshold_percent = Decimal(str(symbol_config['pnlgap']['long_order_threshold_percent']))
         self.pnlgap_short_order_threshold_percent = Decimal(str(symbol_config['pnlgap']['short_order_threshold_percent']))
         self.pnlgap_long_profit_threshold_percent = Decimal(str(symbol_config['pnlgap']['long_profit_threshold_percent']))
@@ -45,8 +46,8 @@ class AdvancedPnlStrategy:
         # Stop-loss can be None (disabled), or a percentage value
         stoploss_config = symbol_config['pnlgap'].get('pnl_stoploss_percent')
         self.pnlgap_stoploss_percent = Decimal(str(stoploss_config)) if stoploss_config is not None else None
-        self.pnlgap_avoid_onesided_orders = symbol_config['pnlgap'].get('avoid_onesided_orders', True)
-        self.pnlgap_leverage = symbol_config['pnlgap']['leverage']
+        # Leverage at symbol level
+        self.leverage = symbol_config['leverage']
 
         # ===== SIMPLETRENDS CONFIG (Child) =====
         st_config = symbol_config['simpletrends']
@@ -62,6 +63,7 @@ class AdvancedPnlStrategy:
         self.st_backward_order_block_percent = Decimal(str(st_config.get('backward_order_block_percent', 0)))
         self.st_long_order_limit = st_config.get('long_order_limit', 999)
         self.st_short_order_limit = st_config.get('short_order_limit', 999)
+        self.st_enable_pnl_barrier = st_config.get('enable_pnl_barrier', False)  # Default False
         self.price_precision = symbol_config['price_precision']
         self.quantity_precision = symbol_config['quantity_precision']
 
@@ -76,12 +78,12 @@ class AdvancedPnlStrategy:
         self.pnlgap_long_profit_threshold_value = None  # Calculated from percent
         self.pnlgap_short_profit_threshold_value = None  # Calculated from percent
         self.pnlgap_stoploss_threshold_value = None  # Fixed threshold for period
+        self.pnlgap_gap_abs_value = None  # Gap between opposing zones (calculated from percent)
         self.period_id: Optional[int] = None
         self.pnlgap_first_long_created = False  # Track if first LONG order has been created
         self.pnlgap_first_short_created = False  # Track if first SHORT order has been created
 
         # ===== SIMPLETRENDS STATE (Child) =====
-        self.st_enabled = False  # Activates when both pnlgap LONG and SHORT exist
         self.st_min_price = None  # SimpleTrends local min
         self.st_max_price = None  # SimpleTrends local max
         self.st_long_order_threshold_value = None
@@ -92,6 +94,7 @@ class AdvancedPnlStrategy:
         self.st_short_stop_loss_value = None
         self.st_forward_order_block_value = None
         self.st_backward_order_block_value = None
+
 
         # SimpleTrends order cache
         self.st_open_orders_cache = {'LONG': [], 'SHORT': []}
@@ -140,8 +143,8 @@ class AdvancedPnlStrategy:
     def _set_leverage(self):
         """Set leverage for symbol"""
         try:
-            set_leverage(self.client, self.symbol, self.pnlgap_leverage)
-            logger.info(f"{self.symbol}: Leverage set to {self.pnlgap_leverage}x")
+            set_leverage(self.client, self.symbol, self.leverage)
+            logger.info(f"{self.symbol}: Leverage set to {self.leverage}x")
         except Exception as e:
             logger.error(f"{self.symbol}: Error setting leverage: {e}")
 
@@ -216,14 +219,32 @@ class AdvancedPnlStrategy:
         # Populate initial breakeven cache
         self._refresh_breakeven_cache()
 
-        # Check if simpletrends should be enabled
-        self._check_st_activation()
+        # Detect if first orders have been created by checking for open orders
+        # This fixes the bug where max_price < reference_price after a drop,
+        # causing the system to incorrectly think no LONG zone exists
+        if self.period_id:
+            open_pnlgap_orders = self.db.get_open_pnlgap_orders(self.symbol, self.period_id)
+            has_open_longs = any(order['side'] == 'LONG' for order in open_pnlgap_orders)
+            has_open_shorts = any(order['side'] == 'SHORT' for order in open_pnlgap_orders)
 
-        # Detect if first orders have been created (if positions exist)
-        if self.cached_breakeven['long_size'] > 0:
-            self.pnlgap_first_long_created = True
-        if self.cached_breakeven['short_size'] > 0:
-            self.pnlgap_first_short_created = True
+            # If we have open orders, the zone definitely exists
+            if has_open_longs:
+                self.pnlgap_first_long_created = True
+            elif self.max_price > self.reference_price:
+                # Fallback: max moved up from reference (for fresh periods)
+                self.pnlgap_first_long_created = True
+
+            if has_open_shorts:
+                self.pnlgap_first_short_created = True
+            elif self.min_price < self.reference_price:
+                # Fallback: min moved down from reference (for fresh periods)
+                self.pnlgap_first_short_created = True
+        else:
+            # No period yet (shouldn't happen, but fallback to old logic)
+            if self.max_price > self.reference_price:
+                self.pnlgap_first_long_created = True
+            if self.min_price < self.reference_price:
+                self.pnlgap_first_short_created = True
 
         # Sync stop-loss tracking from database (after restart)
         if self.period_id and self.pnlgap_stoploss_percent is not None:
@@ -237,8 +258,7 @@ class AdvancedPnlStrategy:
                       f"long_profit_threshold=${self.pnlgap_long_profit_threshold_value:.2f}, "
                       f"short_profit_threshold=${self.pnlgap_short_profit_threshold_value:.2f}, "
                       f"pnl_stoploss={stoploss_str}, "
-                      f"avoid_onesided={self.pnlgap_avoid_onesided_orders}, "
-                      f"st_enabled={self.st_enabled}, leverage={self.pnlgap_leverage}x")
+                      f"leverage={self.leverage}x")
 
     def _calculate_pnlgap_thresholds(self):
         """Calculate pnlgap threshold values from reference price"""
@@ -261,6 +281,9 @@ class AdvancedPnlStrategy:
             self.pnlgap_stoploss_threshold_value = self.reference_price * (self.pnlgap_stoploss_percent / Decimal('100'))
         else:
             self.pnlgap_stoploss_threshold_value = None
+
+        # Calculate PNL gap absolute value (fixed for period)
+        self.pnlgap_gap_abs_value = self.reference_price * (self.pnlgap_gap_percent / Decimal('100'))
 
     def _initialize_simpletrends(self):
         """Initialize SimpleTrends state"""
@@ -323,18 +346,6 @@ class AdvancedPnlStrategy:
         logger.info(f"{self.symbol}: ST - Loaded {len(open_orders)} open orders into cache "
                    f"(LONG: {len(self.st_open_orders_cache['LONG'])}, SHORT: {len(self.st_open_orders_cache['SHORT'])})")
 
-    def _check_st_activation(self):
-        """Check if SimpleTrends should be enabled (both pnlgap LONG and SHORT exist)"""
-        has_long = self.cached_breakeven['long_size'] > 0
-        has_short = self.cached_breakeven['short_size'] > 0
-
-        if has_long and has_short and not self.st_enabled:
-            self.st_enabled = True
-            logger.warning(f"{self.symbol}: SIMPLETRENDS ACTIVATED - Both pnlgap sides exist")
-        elif not (has_long and has_short) and self.st_enabled:
-            self.st_enabled = False
-            logger.warning(f"{self.symbol}: SIMPLETRENDS DEACTIVATED - Missing pnlgap side")
-
     async def run(self):
         """Main strategy loop - polls Redis for price every 1 second"""
         self.running = True
@@ -385,12 +396,8 @@ class AdvancedPnlStrategy:
             # 3. Update simpletrends min/max
             self._update_st_min_max(mark_price)
 
-            # 4. Check if simpletrends should be enabled/disabled
-            self._check_st_activation()
-
-            # 5. Check simpletrends entry signals (if enabled)
-            if self.st_enabled:
-                await self._check_st_entries(mark_price)
+            # 4. Check simpletrends entry signals
+            await self._check_st_entries(mark_price)
 
         except Exception as e:
             logger.error(f"{self.symbol}: Error in strategy execution: {e}")
@@ -484,63 +491,75 @@ class AdvancedPnlStrategy:
             logger.error(f"{self.symbol}: Error checking period close: {e}")
 
     async def _check_pnlgap_entries(self, mark_price: Decimal):
-        """Check for pnlgap LONG or SHORT entry signals"""
+        """Check for pnlgap LONG or SHORT entry signals with dynamic gap logic"""
         if not all([self.min_price, self.max_price, self.pnlgap_long_order_threshold_value]):
             return
 
-        # Check avoid one-sided orders
-        has_long = self.cached_breakeven['long_size'] > 0
-        has_short = self.cached_breakeven['short_size'] > 0
-
-        # LONG signal
-        # Use first order threshold if this is the first LONG, otherwise use normal threshold
+        # ===== LONG ENTRY LOGIC =====
         if not self.pnlgap_first_long_created:
-            # First LONG: trigger from reference price
-            long_trigger = self.reference_price + self.pnlgap_long_first_order_threshold_value
-        else:
-            # Subsequent LONGs: trigger from max_price
-            long_trigger = self.max_price + self.pnlgap_long_order_threshold_value
-
-        if mark_price >= long_trigger:
-            # Check if we should avoid one-sided orders
-            if self.pnlgap_avoid_onesided_orders and has_long and not has_short:
-                logger.info(f"{self.symbol}: PNLGAP LONG BLOCKED - avoid_onesided_orders enabled, no SHORT position exists")
+            # CASE 1: First LONG (no LONG zone exists yet)
+            if not self.pnlgap_first_short_created:
+                # Neither zone exists - use initial large threshold
+                long_trigger = self.reference_price + self.pnlgap_long_first_order_threshold_value
+                trigger_type = "initial"
             else:
+                # SHORT zone exists - create LONG zone close to it using gap
+                long_trigger = self.min_price + self.pnlgap_gap_abs_value
+                trigger_type = "gap-activated"
+
+            if mark_price >= long_trigger:
+                # Create first LONG
                 old_max = self.max_price
                 self.max_price = mark_price
-                is_first = "FIRST " if not self.pnlgap_first_long_created else ""
-                logger.warning(f"{self.symbol}: PNLGAP {is_first}LONG SIGNAL - price={mark_price}, trigger={long_trigger:.8f}, old_max={old_max}, new_max={self.max_price}")
-                # Update database with new max_price
+                logger.warning(f"{self.symbol}: PNLGAP FIRST LONG ({trigger_type}) - "
+                             f"price={mark_price}, trigger={long_trigger:.8f}, old_max={old_max}, new_max={self.max_price}, "
+                             f"gap=${self.pnlgap_gap_abs_value:.8f}")
                 self.db.update_period_prices(self.period_id, self.min_price, self.max_price)
                 await self._open_pnlgap_position('LONG', mark_price)
-                # Mark first LONG as created
-                if not self.pnlgap_first_long_created:
-                    self.pnlgap_first_long_created = True
-
-        # SHORT signal
-        # Use first order threshold if this is the first SHORT, otherwise use normal threshold
-        if not self.pnlgap_first_short_created:
-            # First SHORT: trigger from reference price
-            short_trigger = self.reference_price - self.pnlgap_short_first_order_threshold_value
+                self.pnlgap_first_long_created = True
         else:
-            # Subsequent SHORTs: trigger from min_price
-            short_trigger = self.min_price - self.pnlgap_short_order_threshold_value
+            # CASE 2: Subsequent LONGs (pyramid) - normal logic
+            long_trigger = self.max_price + self.pnlgap_long_order_threshold_value
+            if mark_price >= long_trigger:
+                old_max = self.max_price
+                self.max_price = mark_price
+                logger.warning(f"{self.symbol}: PNLGAP LONG (pyramid) - "
+                             f"price={mark_price}, trigger={long_trigger:.8f}, old_max={old_max}, new_max={self.max_price}")
+                self.db.update_period_prices(self.period_id, self.min_price, self.max_price)
+                await self._open_pnlgap_position('LONG', mark_price)
 
-        if mark_price <= short_trigger:
-            # Check if we should avoid one-sided orders
-            if self.pnlgap_avoid_onesided_orders and has_short and not has_long:
-                logger.info(f"{self.symbol}: PNLGAP SHORT BLOCKED - avoid_onesided_orders enabled, no LONG position exists")
+        # ===== SHORT ENTRY LOGIC =====
+        if not self.pnlgap_first_short_created:
+            # CASE 1: First SHORT (no SHORT zone exists yet)
+            if not self.pnlgap_first_long_created:
+                # Neither zone exists - use initial large threshold
+                short_trigger = self.reference_price - self.pnlgap_short_first_order_threshold_value
+                trigger_type = "initial"
             else:
+                # LONG zone exists - create SHORT zone close to it using gap
+                short_trigger = self.max_price - self.pnlgap_gap_abs_value
+                trigger_type = "gap-activated"
+
+            if mark_price <= short_trigger:
+                # Create first SHORT
                 old_min = self.min_price
                 self.min_price = mark_price
-                is_first = "FIRST " if not self.pnlgap_first_short_created else ""
-                logger.warning(f"{self.symbol}: PNLGAP {is_first}SHORT SIGNAL - price={mark_price}, trigger={short_trigger:.8f}, old_min={old_min}, new_min={self.min_price}")
-                # Update database with new min_price
+                logger.warning(f"{self.symbol}: PNLGAP FIRST SHORT ({trigger_type}) - "
+                             f"price={mark_price}, trigger={short_trigger:.8f}, old_min={old_min}, new_min={self.min_price}, "
+                             f"gap=${self.pnlgap_gap_abs_value:.8f}")
                 self.db.update_period_prices(self.period_id, self.min_price, self.max_price)
                 await self._open_pnlgap_position('SHORT', mark_price)
-                # Mark first SHORT as created
-                if not self.pnlgap_first_short_created:
-                    self.pnlgap_first_short_created = True
+                self.pnlgap_first_short_created = True
+        else:
+            # CASE 2: Subsequent SHORTs (pyramid) - normal logic
+            short_trigger = self.min_price - self.pnlgap_short_order_threshold_value
+            if mark_price <= short_trigger:
+                old_min = self.min_price
+                self.min_price = mark_price
+                logger.warning(f"{self.symbol}: PNLGAP SHORT (pyramid) - "
+                             f"price={mark_price}, trigger={short_trigger:.8f}, old_min={old_min}, new_min={self.min_price}")
+                self.db.update_period_prices(self.period_id, self.min_price, self.max_price)
+                await self._open_pnlgap_position('SHORT', mark_price)
 
     async def _open_pnlgap_position(self, side: str, mark_price: Decimal):
         """Open pnlgap LONG or SHORT position"""
@@ -595,9 +614,6 @@ class AdvancedPnlStrategy:
 
                 # Refresh breakeven cache after position change
                 self._refresh_breakeven_cache()
-
-                # Check if simpletrends should be activated
-                self._check_st_activation()
 
         except Exception as e:
             logger.error(f"{self.symbol}: ERROR CREATING PNLGAP ORDER - side={side}, error={e}")
@@ -803,14 +819,9 @@ class AdvancedPnlStrategy:
             if not continue_periods:
                 logger.warning(f"{self.symbol}: STOPPING STRATEGY - continue_periods is False. No new periods will be created.")
                 self.running = False
-                # Disable simpletrends
-                self.st_enabled = False
-                self.st_open_orders_cache = {'LONG': [], 'SHORT': []}
-                self.st_pending_market_orders = {}
                 return
 
-            # Disable simpletrends
-            self.st_enabled = False
+            # Clear simpletrends cache for new period
             self.st_open_orders_cache = {'LONG': [], 'SHORT': []}
             self.st_pending_market_orders = {}
 
@@ -854,7 +865,7 @@ class AdvancedPnlStrategy:
             self.st_max_price = mark_price
 
     async def _check_st_entries(self, mark_price: Decimal):
-        """Check for SimpleTrends entry signals (only if enabled and price in correct zone)"""
+        """Check for SimpleTrends entry signals with optional PNL barrier logic"""
         if not all([self.st_min_price, self.st_max_price, self.st_long_order_threshold_value]):
             return
 
@@ -863,8 +874,15 @@ class AdvancedPnlStrategy:
         if last_trade_price == Decimal('0'):
             last_trade_price = mark_price
 
-        # LONG signal: price < LONG entry price (lower zone) AND price > st_min + threshold
-        if self.long_entry_price > 0 and mark_price < self.long_entry_price:
+        # LONG signal: Check barrier first (if enabled), then normal trigger
+        if self.st_enable_pnl_barrier:
+            # Barrier: No PNL LONG exists OR price < PNL LONG entry
+            long_barrier_ok = (not self.pnlgap_first_long_created) or (mark_price < self.long_entry_price)
+        else:
+            # Barrier disabled - always allow
+            long_barrier_ok = True
+
+        if long_barrier_ok:
             long_trigger = self.st_min_price + self.st_long_order_threshold_value
             if mark_price >= long_trigger:
                 # Check order limit
@@ -873,12 +891,23 @@ class AdvancedPnlStrategy:
                     if self._check_st_order_block('LONG', last_trade_price):
                         old_min = self.st_min_price
                         self.st_min_price = mark_price
+                        if self.st_enable_pnl_barrier:
+                            barrier_str = f"below barrier {self.long_entry_price}" if self.long_entry_price > 0 else "no barrier"
+                        else:
+                            barrier_str = "barrier disabled"
                         logger.warning(f"{self.symbol}: ST LONG SIGNAL - mark_price={mark_price}, last_trade={last_trade_price}, "
-                                      f"trigger={long_trigger:.8f}, old_min={old_min}, new_min={self.st_min_price}, long_entry={self.long_entry_price}")
+                                      f"trigger={long_trigger:.8f}, old_min={old_min}, new_min={self.st_min_price}, {barrier_str}")
                         await self._open_st_position('LONG', mark_price)
 
-        # SHORT signal: price > SHORT entry price (upper zone) AND price < st_max - threshold
-        if self.short_entry_price > 0 and mark_price > self.short_entry_price:
+        # SHORT signal: Check barrier first (if enabled), then normal trigger
+        if self.st_enable_pnl_barrier:
+            # Barrier: No PNL SHORT exists OR price > PNL SHORT entry
+            short_barrier_ok = (not self.pnlgap_first_short_created) or (mark_price > self.short_entry_price)
+        else:
+            # Barrier disabled - always allow
+            short_barrier_ok = True
+
+        if short_barrier_ok:
             short_trigger = self.st_max_price - self.st_short_order_threshold_value
             if mark_price <= short_trigger:
                 # Check order limit
@@ -887,8 +916,12 @@ class AdvancedPnlStrategy:
                     if self._check_st_order_block('SHORT', last_trade_price):
                         old_max = self.st_max_price
                         self.st_max_price = mark_price
+                        if self.st_enable_pnl_barrier:
+                            barrier_str = f"above barrier {self.short_entry_price}" if self.short_entry_price > 0 else "no barrier"
+                        else:
+                            barrier_str = "barrier disabled"
                         logger.warning(f"{self.symbol}: ST SHORT SIGNAL - mark_price={mark_price}, last_trade={last_trade_price}, "
-                                      f"trigger={short_trigger:.8f}, old_max={old_max}, new_max={self.st_max_price}, short_entry={self.short_entry_price}")
+                                      f"trigger={short_trigger:.8f}, old_max={old_max}, new_max={self.st_max_price}, {barrier_str}")
                         await self._open_st_position('SHORT', mark_price)
 
     def _check_st_order_block(self, side: str, current_price: Decimal) -> bool:

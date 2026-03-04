@@ -208,3 +208,20 @@ def set_leverage(client: Client, symbol: str, leverage: int):
     Set leverage for a symbol
     """
     return client.futures_change_leverage(symbol=symbol, leverage=leverage)
+
+
+def get_symbol_precision(client: Client, symbol: str) -> dict:
+    """
+    Get price precision and quantity precision for a symbol
+    Returns: {'price_precision': int, 'quantity_precision': int}
+    """
+    exchange_info = client.futures_exchange_info()
+
+    for symbol_info in exchange_info['symbols']:
+        if symbol_info['symbol'] == symbol:
+            return {
+                'price_precision': symbol_info['pricePrecision'],
+                'quantity_precision': symbol_info['quantityPrecision']
+            }
+
+    return None

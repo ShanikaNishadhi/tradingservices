@@ -6,7 +6,7 @@ services:
     container_name: timescaledb
     restart: always
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -154,6 +154,40 @@ services:
     profiles:
       - backup
 
+  advancedsimpletrends:
+    build:
+      context: .
+      dockerfile: App/advancedsimpletrends/Dockerfile
+    container_name: advancedsimpletrends
+    restart: always
+    depends_on:
+      - redis
+      - timescaledb
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    volumes:
+      - ./App/advancedsimpletrends:/app/App/advancedsimpletrends
+      - ./App/helpers:/app/App/helpers
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5050:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL:-admin@example.com}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:-TempPass123}
+      - PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION=False
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - timescaledb
+
 volumes:
   tsdata:
     external: true
+  pgadmin_data:
